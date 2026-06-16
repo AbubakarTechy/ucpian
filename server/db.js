@@ -10,7 +10,22 @@ function getDbPath() {
   }
 
   if (process.env.VERCEL) {
-    return '/tmp/campusnotes.db';
+    const tmpDbPath = '/tmp/campusnotes.db';
+    const seedDbPath = path.join(__dirname, 'data', 'campusnotes.db');
+
+    if (!fs.existsSync(tmpDbPath)) {
+      try {
+        if (fs.existsSync(seedDbPath)) {
+          fs.copyFileSync(seedDbPath, tmpDbPath);
+          console.log(`Database successfully seeded from ${seedDbPath} to ${tmpDbPath}`);
+        } else {
+          console.log(`Seed database not found at ${seedDbPath}. A new empty database will be initialized.`);
+        }
+      } catch (err) {
+        console.error('Error seeding database to /tmp:', err);
+      }
+    }
+    return tmpDbPath;
   }
 
   const dataDir = path.join(__dirname, 'data');
@@ -64,7 +79,11 @@ function connectDB() {
   }
 
   db = new Database(getDbPath());
-  db.pragma('journal_mode = WAL');
+  if (process.env.VERCEL) {
+    db.pragma('journal_mode = DELETE');
+  } else {
+    db.pragma('journal_mode = WAL');
+  }
   db.pragma('foreign_keys = ON');
   initSchema(db);
 
