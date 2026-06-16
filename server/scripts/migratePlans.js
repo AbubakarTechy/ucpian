@@ -1,24 +1,16 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
-const mongoose = require('mongoose');
-const User = require('../models/User');
+const connectDB = require('../db');
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/ucpian';
+function migrate() {
+  const db = connectDB();
 
-async function migrate() {
-  await mongoose.connect(MONGODB_URI);
+  const proResult = db.prepare("UPDATE users SET plan = 'Ultra' WHERE plan = 'Pro'").run();
+  const basicResult = db.prepare("UPDATE users SET plan = 'Pro' WHERE plan = 'Basic'").run();
+  const freeResult = db.prepare("UPDATE users SET plan = 'Basic' WHERE plan = 'Free'").run();
 
-  const proResult = await User.updateMany({ plan: 'Pro' }, { $set: { plan: 'Ultra' } });
-  const basicResult = await User.updateMany({ plan: 'Basic' }, { $set: { plan: 'Pro' } });
-  const freeResult = await User.updateMany({ plan: 'Free' }, { $set: { plan: 'Basic' } });
-
-  console.log('Migrated Pro -> Ultra:', proResult.modifiedCount);
-  console.log('Migrated Basic -> Pro:', basicResult.modifiedCount);
-  console.log('Migrated Free -> Basic:', freeResult.modifiedCount);
-
-  await mongoose.disconnect();
+  console.log('Migrated Pro -> Ultra:', proResult.changes);
+  console.log('Migrated Basic -> Pro:', basicResult.changes);
+  console.log('Migrated Free -> Basic:', freeResult.changes);
 }
 
-migrate().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+migrate();

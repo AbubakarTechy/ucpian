@@ -1,4 +1,4 @@
-const User = require('../models/User');
+const User = require('../models/userModel');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { OAuth2Client } = require('google-auth-library');
@@ -53,7 +53,6 @@ const formatUserResponse = (user) => ({
 
 const isValidEmail = (email) => /^\S+@\S+\.\S+$/.test(email);
 
-// POST /api/auth/register
 exports.register = async (req, res) => {
   try {
     const { name, email, password } = req.body;
@@ -70,22 +69,20 @@ exports.register = async (req, res) => {
       return res.status(400).json({ message: 'Password must be at least 6 characters long.' });
     }
 
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    const existingUser = User.findUserByEmail(email);
     if (existingUser) {
       return res.status(400).json({ message: 'An account with this email already exists. Please log in.' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const user = new User({
+    const user = User.createUser({
       name: name.trim(),
       email: email.toLowerCase().trim(),
       password: hashedPassword,
       plan: 'Basic',
       downloadsCount: 0
     });
-
-    await user.save();
 
     const token = generateToken(user);
 
@@ -100,7 +97,6 @@ exports.register = async (req, res) => {
   }
 };
 
-// POST /api/auth/login
 exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -113,7 +109,7 @@ exports.login = async (req, res) => {
       return res.status(400).json({ message: 'Please provide a valid email address.' });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() }).select('+password');
+    const user = User.findUserByEmail(email, true);
     if (!user) {
       return res.status(401).json({ message: 'Invalid email or password. Please register first.' });
     }
@@ -140,7 +136,6 @@ exports.login = async (req, res) => {
   }
 };
 
-// POST /api/auth/admin/login
 exports.adminLogin = async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -177,7 +172,6 @@ exports.adminLogin = async (req, res) => {
   }
 };
 
-// GET /api/auth/profile
 exports.getProfile = async (req, res) => {
   try {
     if (req.user.role === 'admin' || req.user.isAdmin) {
@@ -186,7 +180,7 @@ exports.getProfile = async (req, res) => {
       });
     }
 
-    const user = await User.findById(req.user.id);
+    const user = User.findUserById(req.user.id);
     if (!user) {
       return res.status(404).json({ message: 'User not found.' });
     }
@@ -200,7 +194,6 @@ exports.getProfile = async (req, res) => {
   }
 };
 
-// POST /api/auth/upgrade
 exports.upgradePlan = async (req, res) => {
   try {
     const { plan } = req.body;
@@ -211,21 +204,22 @@ exports.upgradePlan = async (req, res) => {
 
     const normalizedPlan = plan === 'Free' ? 'Basic' : plan;
 
-    const user = await User.findById(req.user.id);
+    const user = User.findUserById(req.user.id);
     if (!user) {
       return res.status(404).json({ message: 'User not found.' });
     }
 
-    user.plan = normalizedPlan;
-    user.downloadsCount = 0;
-    await user.save();
+    const updatedUser = User.updateUser(req.user.id, {
+      plan: normalizedPlan,
+      downloadsCount: 0
+    });
 
-    const token = generateToken(user);
+    const token = generateToken(updatedUser);
 
     res.status(200).json({
       message: `Successfully upgraded to ${normalizedPlan} Plan!`,
       token,
-      user: formatUserResponse(user)
+      user: formatUserResponse(updatedUser)
     });
   } catch (error) {
     console.error('Error in upgradePlan controller:', error);
@@ -233,10 +227,9 @@ exports.upgradePlan = async (req, res) => {
   }
 };
 
-// GET /api/auth/users (Protected, Admin Only)
 exports.getAllUsers = async (req, res) => {
   try {
-    const users = await User.find().select('-password').sort({ createdAt: -1 });
+    const users = User.getAllUsers();
     res.status(200).json(users);
   } catch (error) {
     console.error('Error in getAllUsers controller:', error);
@@ -244,7 +237,6 @@ exports.getAllUsers = async (req, res) => {
   }
 };
 
-// POST /api/auth/google
 exports.googleLogin = async (req, res) => {
   try {
     const { credential } = req.body;
@@ -267,19 +259,23 @@ exports.googleLogin = async (req, res) => {
       return res.status(400).json({ message: 'Google account email is required.' });
     }
 
-    let user = await User.findOne({ $or: [{ googleId }, { email: email.toLowerCase() }] });
+    let user = User.findUserByGoogleIdOrEmail(googleId, email);
 
     if (user) {
+      const updates = {};
       if (!user.googleId) {
-        user.googleId = googleId;
-        user.authProvider = 'google';
+        updates.googleId = googleId;
+        updates.authProvider = 'google';
       }
       if (picture && !user.profilePic) {
-        user.profilePic = picture;
+        updates.profilePic = picture;
       }
-      await user.save();
+
+      if (Object.keys(updates).length > 0) {
+        user = User.updateUser(user._id, updates);
+      }
     } else {
-      user = new User({
+      user = User.createUser({
         name: name || email.split('@')[0],
         email: email.toLowerCase(),
         googleId,
@@ -288,7 +284,6 @@ exports.googleLogin = async (req, res) => {
         plan: 'Basic',
         downloadsCount: 0
       });
-      await user.save();
     }
 
     const token = generateToken(user);
